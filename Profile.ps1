@@ -1,5 +1,9 @@
 ﻿Function Get-PubIP {
- (Invoke-WebRequest http://ifconfig.me/ip ).Content
+    try {
+        (Invoke-WebRequest http://ifconfig.me/ip -ErrorAction Stop).Content
+    } catch {
+        Write-Error "Unable to retrieve public IP."
+    }
 }
 
 Function Get-Zulu {
@@ -7,17 +11,11 @@ Function Get-Zulu {
 }
 
 Function Get-Pass {
--join(48..57+65..90+97..122|ForEach-Object{[char]$_}|Get-Random -C 20)
-}
-
-. "C:\Users\mr.smashy\Dropbox\Code\PowerShell\United Scripts\Test-MemoryUsage.ps1"
-
-Set-Alias -Name gmm -Value Test-MemoryUsage
-
-# Chocolatey profile
-$ChocolateyProfile = "$env:ChocolateyInstall\helpers\chocolateyProfile.psm1"
-if (Test-Path($ChocolateyProfile)) {
-  Import-Module "$ChocolateyProfile"
+    param (
+        [int]$length = 20, 
+        [string]$charset = "48..57+65..90+97..122"
+    )
+    -join(48..57+65..90+97..122 | ForEach-Object { [char]$_ } | Get-Random -Count $length)
 }
 
 function uptime {
@@ -26,41 +24,43 @@ function uptime {
 }
 
 function df {
-	get-volume
-}
-
-function grep($regex, $dir) {
-	if ( $dir ) {
-		ls $dir | select-string $regex
-		return
-	}
-	$input | select-string $regex
+    Get-Volume | Select-Object DriveLetter, FileSystemLabel, @{Name="Size(GB)";Expression={[math]::Round($_.Size/1GB,2)}}, @{Name="Free(GB)";Expression={[math]::Round($_.SizeRemaining/1GB,2)}}
 }
 
 function touch($file) {
-	"" | Out-File $file -Encoding ASCII
+    if (Test-Path $file) {
+        # Update last write time if the file exists
+        (Get-Item $file).LastWriteTime = Get-Date
+    } else {
+        # Create a new file if it doesn't exist
+        "" | Out-File $file -Encoding ASCII
+    }
 }
 
 function reload-profile {
-	& $profile
+    . $PROFILE
+    Write-Host "Profile reloaded successfully!"
 }
 
 function find-file($name) {
-	ls -recurse -filter "*${name}*" -ErrorAction SilentlyContinue | foreach {
-		$place_path = $_.directory
-		echo "${place_path}\${_}"
-	}
+    Get-ChildItem -Recurse -File -Filter "*${name}*" -ErrorAction SilentlyContinue | ForEach-Object {
+        "$($_.DirectoryName)\$($_.Name)"
+    }
 }
 
 function unzip ($file) {
-	$dirname = (Get-Item $file).Basename
-	echo("Extracting", $file, "to", $dirname)
-	New-Item -Force -ItemType directory -Path $dirname
-	expand-archive $file -OutputPath $dirname -ShowProgress
+    $dirname = (Get-Item $file).Basename
+    if (-not (Test-Path $dirname)) {
+        New-Item -Force -ItemType directory -Path $dirname
+        Expand-Archive $file -OutputPath $dirname -ShowProgress
+        Write-Host "Extracted $file to $dirname"
+    } else {
+        Write-Host "Directory $dirname already exists!"
+    }
 }
 
-function sed($file, $find, $replace){
-	(Get-Content $file).replace("$find", $replace) | Set-Content $file
+function sed($file, $find, $replace) {
+    (Get-Content $file -Raw -Encoding UTF8).replace("$find", "$replace") | Set-Content $file -Encoding UTF8
 }
 
 function which($name) {
@@ -79,3 +79,6 @@ function pgrep($name) {
 	ps $name
 }
 
+function ll {
+    Get-ChildItem -Force | Format-Table -Property Mode, LastWriteTime, @{Name="Size(GB)";Expression={[math]::Round($_.Length/1GB, 2)}}, Name -AutoSize
+}
