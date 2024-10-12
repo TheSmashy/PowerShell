@@ -19,8 +19,10 @@ Function Get-Pass {
 }
 
 function uptime {
-	Get-WmiObject win32_operatingsystem | select csname, @{LABEL='LastBootUpTime';
-	EXPRESSION={$_.ConverttoDateTime($_.lastbootuptime)}}
+    $os = Get-CimInstance -ClassName Win32_OperatingSystem
+    $lastBoot = $os.LastBootUpTime
+    $uptime = (Get-Date) - $lastBoot
+    Write-Host "System has been up for $($uptime.Days) days, $($uptime.Hours) hours, $($uptime.Minutes) minutes."
 }
 
 function df {
