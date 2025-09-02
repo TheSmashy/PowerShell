@@ -1,9 +1,17 @@
-﻿Function Get-PubIP {
-    try {
-        (Invoke-WebRequest http://ifconfig.me/ip -ErrorAction Stop).Content
-    } catch {
-        Write-Error "Unable to retrieve public IP."
+cd c:\users\thesmashy\dropbox\code
+
+Function Get-PubIP {
+    $urls = @(
+        'https://ifconfig.me/ip',
+        'https://ipv4.icanhazip.com',
+        'https://api.ipify.org'
+    )
+    foreach ($u in $urls) {
+        try {
+            return (Invoke-WebRequest -Uri $u -TimeoutSec 5 -UseBasicParsing).Content.Trim()
+        } catch { continue }
     }
+    throw "Unable to retrieve public IP from any endpoint."
 }
 
 Function Get-Zulu {
@@ -11,11 +19,14 @@ Function Get-Zulu {
 }
 
 Function Get-Pass {
-    param (
-        [int]$length = 20, 
-        [string]$charset = "48..57+65..90+97..122"
+    param(
+        [int]$length = 20,
+        [string]$charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
     )
-    -join(48..57+65..90+97..122 | ForEach-Object { [char]$_ } | Get-Random -Count $length)
+    $chars = $charset.ToCharArray()
+    $buf   = New-Object byte[] ($length)
+    [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($buf)
+    -join ($buf | ForEach-Object { $chars[ $_ % $chars.Length ] })
 }
 
 function uptime {
@@ -83,4 +94,61 @@ function pgrep($name) {
 
 function ll {
     Get-ChildItem -Force | Format-Table -Property Mode, LastWriteTime, @{Name="Size(GB)";Expression={[math]::Round($_.Length/1GB, 2)}}, Name -AutoSize
+}
+
+function Hash-Folder {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path,
+        [string]$OutFile = "$env:USERPROFILE\Desktop\hashes.csv",
+        [string]$Algo = "SHA256"
+    )
+    if (!(Test-Path $Path)) { Write-Error "Path $Path not found."; return }
+
+    $root = (Resolve-Path $Path).Path
+    Get-ChildItem -Path $root -Recurse -File | ForEach-Object {
+        $h = Get-FileHash -Algorithm $Algo -Path $_.FullName
+        [PSCustomObject]@{
+            HashAlgorithm = $h.Algorithm
+            Hash          = $h.Hash
+            Path          = $_.FullName
+            RelativePath  = $_.FullName.Substring($root.Length).TrimStart('\','/')
+            Length        = $_.Length
+            LastWriteTime = $_.LastWriteTimeUtc
+        }
+    } | Export-Csv -Path $OutFile -NoTypeInformation
+    Write-Host "Hashes written to $OutFile ($Algo)"
+}
+
+function Compare-Hashes {
+    param(
+        [Parameter(Mandatory)] [string]$OldCsv,
+        [Parameter(Mandatory)] [string]$NewCsv
+    )
+    $old = Import-Csv $OldCsv | Select-Object Hash,RelativePath,Path
+    $new = Import-Csv $NewCsv | Select-Object Hash,RelativePath,Path
+
+    # Prefer RelativePath when available; fall back to Path
+    $old = $old | ForEach-Object { $_.RelativePath = $_.RelativePath ?? $_.Path; $_ }
+    $new = $new | ForEach-Object { $_.RelativePath = $_.RelativePath ?? $_.Path; $_ }
+
+    $diff = Compare-Object -ReferenceObject $old -DifferenceObject $new -Property RelativePath,Hash -PassThru
+    if (-not $diff) { Write-Host "✅ No differences." }
+    else { $diff | Format-Table SideIndicator, RelativePath, Hash }
+}
+
+function Copy-WithVerify {
+    param(
+        [Parameter(Mandatory)] [string]$Source,
+        [Parameter(Mandatory)] [string]$Dest,
+        [string]$Algo = "SHA256"
+    )
+    robocopy $Source $Dest /MIR /R:1 /W:1 | Out-Null
+
+    $oldCsv = Join-Path $env:TEMP ("old_" + (Get-Random) + ".csv")
+    $newCsv = Join-Path $env:TEMP ("new_" + (Get-Random) + ".csv")
+
+    Hash-Folder -Path $Source -OutFile $oldCsv -Algo $Algo
+    Hash-Folder -Path $Dest   -OutFile $newCsv -Algo $Algo
+    Compare-Hashes -OldCsv $oldCsv -NewCsv $newCsv
 }
